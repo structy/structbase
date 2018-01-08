@@ -7,13 +7,8 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
--- uuid generator
+-- uuid extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE OR REPLACE FUNCTION UUID() RETURNS uuid AS $$
-BEGIN
-        RETURN uuid_generate_v4();
-END;
-$$ LANGUAGE plpgsql;
 
 -- audit trigger
 CREATE OR REPLACE FUNCTION update_audit()
@@ -22,7 +17,7 @@ BEGIN
         INSERT INTO audits
         (uuid, key, node, version, object)
         VALUES
-        (OLD.uuid, NEW.key, NEW.node, UUID(), OLD.object);
+        (OLD.uuid, NEW.key, NEW.node, uuid_generate_v4(), OLD.object);
         RETURN NEW;
 END;
 $$ language 'plpgsql';
@@ -30,32 +25,40 @@ $$ language 'plpgsql';
 -- objects table
 CREATE TABLE objects
 (
-        uuid character varying(250) DEFAULT UUID() NOT NULL,
+        uuid uuid DEFAULT uuid_generate_v4() NOT NULL,
         key character varying(150) NOT NULL,
         node character varying(150) NOT NULL,
-        object jsonb DEFAULT '{}',
+        object jsonb,
         created_at timestamp without time zone NOT NULL DEFAULT now(),
         last_update timestamp without time zone NOT NULL DEFAULT now(),
-	PRIMARY KEY (uuid),
+        PRIMARY KEY (uuid),
         CONSTRAINT unique_objects UNIQUE (key, node)
 );
+
+ALTER TABLE objects
+        ALTER COLUMN object SET STORAGE EXTERNAL;
+
 CREATE TRIGGER update_objects
-BEFORE UPDATE ON objects
-FOR EACH ROW EXECUTE PROCEDURE update_datetime();
+        BEFORE UPDATE ON objects
+        FOR EACH ROW EXECUTE PROCEDURE update_datetime();
+
 CREATE TRIGGER update_audits
-BEFORE UPDATE ON objects
-FOR EACH ROW EXECUTE PROCEDURE update_audit();
+        BEFORE UPDATE ON objects
+        FOR EACH ROW EXECUTE PROCEDURE update_audit();
 
 -- audit table
 CREATE TABLE audits
 (
-        uuid character varying(250) NOT NULL,
+        uuid uuid NOT NULL,
         key character varying(150) NOT NULL,
         node character varying(150) NOT NULL,
-        version character varying(250) NOT NULL,
-        object jsonb NOT NULL,
+        version uuid NOT NULL,
+        object jsonb,
         created_at timestamp without time zone NOT NULL DEFAULT now(),
         last_update timestamp without time zone NOT NULL DEFAULT now(),
-	PRIMARY KEY (uuid),
+        PRIMARY KEY (uuid),
         CONSTRAINT unique_audits UNIQUE (key, node, version)
 );
+
+ALTER TABLE audits
+        ALTER COLUMN object SET STORAGE EXTERNAL;
