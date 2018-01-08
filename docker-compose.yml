@@ -1,0 +1,24 @@
+version: "3"
+services:
+  postgres:
+    image: postgres:10
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=mds
+      - POSTGRES_USER=postgres
+      - TZ=GMT
+    volumes:
+      - "./data:/var/lib/postgresql/data"
+  go:
+    build: ./
+    ports:
+      - "3000:3000"
+    links:
+      - "postgres:postgres"
+    environment:
+      - PREST_PG_USER=postgres
+      - PREST_PG_HOST=postgres
+      - PREST_PG_DATABASE=mds
+      - PREST_MIGRATIONS=./migrations
+      - PREST_DEBUG=true
