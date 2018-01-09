@@ -56,8 +56,7 @@ CREATE TABLE audits
         object jsonb,
         created_at timestamp without time zone NOT NULL DEFAULT now(),
         last_update timestamp without time zone NOT NULL DEFAULT now(),
-        PRIMARY KEY (uuid),
-        CONSTRAINT unique_audits UNIQUE (key, node, version)
+        CONSTRAINT unique_audits UNIQUE (uuid, key, node, version)
 );
 
 ALTER TABLE audits
