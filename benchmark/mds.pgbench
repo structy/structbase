@@ -1,0 +1,36 @@
+/* pgbench -s 10 -n -r -c 20 -j 5 -T 60 -f mds.pgbench */
+
+/* set some benchmarch variables */
+\set mds_key (1021 * random(1, 100000 * :scale)) % (100000 * :scale) + 1
+\set mds_node :client_id
+
+BEGIN;
+
+	/* insert just one object */
+	INSERT INTO
+		objects (uuid, key, node, object)
+	VALUES
+		(uuid_generate_v4(), :mds_key, :mds_node,
+			(select jsonb_agg(jsonb_build_object('k'||id, 'v'||repeat(id::text, (random()*:scale)::int))) from generate_series(1, (random()*:scale)::int) as id))
+	ON CONFLICT ON CONSTRAINT unique_objects DO UPDATE SET
+		object = (select jsonb_agg(jsonb_build_object('k'||id, 'v'||repeat(id::text, (random()*:scale)::int))) from generate_series(1, (random()*:scale)::int) as id)
+	RETURNING
+		set_config('mds.uuid', uuid::text, false);
+
+	/* perform N (randomically) updates on 'objects' table */
+	DO
+	$$
+	BEGIN
+		FOR i IN 1..(random()*:scale)::int
+		LOOP
+			UPDATE
+				objects
+			SET
+				object = object || jsonb_build_object('kr'||i, 'vr'||i)
+			WHERE
+				objects.uuid = current_setting('mds.uuid')::uuid;
+		END LOOP;
+	END;
+	$$ LANGUAGE plpgsql;
+
+COMMIT;
