@@ -6,21 +6,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"unicode"
 
+	"github.com/lib/pq"
+
 	"github.com/jmoiron/sqlx"
 	"github.com/nuveo/log"
 	"github.com/prest/adapters"
-	"github.com/prest/adapters/internal/scanner"
-	"github.com/prest/adapters/postgres/connection"
 	"github.com/prest/adapters/postgres/formatters"
+	"github.com/prest/adapters/postgres/internal/connection"
+	"github.com/prest/adapters/postgres/statements"
+	"github.com/prest/adapters/scanner"
 	"github.com/prest/config"
-	"github.com/prest/statements"
 )
 
 //Postgres adapter postgresql
@@ -50,7 +54,7 @@ type Stmt struct {
 }
 
 // Prepare statement
-func (s *Stmt) Prepare(db *sqlx.DB, SQL string) (statement *sql.Stmt, err error) {
+func (s *Stmt) Prepare(db *sqlx.DB, tx *sql.Tx, SQL string) (statement *sql.Stmt, err error) {
 	if config.PrestConf.EnableCache {
 		var exists bool
 		s.Mtx.Lock()
@@ -60,7 +64,13 @@ func (s *Stmt) Prepare(db *sqlx.DB, SQL string) (statement *sql.Stmt, err error)
 			return
 		}
 	}
-	statement, err = db.Prepare(SQL)
+
+	if tx != nil {
+		statement, err = tx.Prepare(SQL)
+	} else {
+		statement, err = db.Prepare(SQL)
+	}
+
 	if err != nil {
 		return
 	}
@@ -75,6 +85,14 @@ func (s *Stmt) Prepare(db *sqlx.DB, SQL string) (statement *sql.Stmt, err error)
 // Load postgres
 func Load() {
 	config.PrestConf.Adapter = &Postgres{}
+	db, err := connection.Get()
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = db.Ping()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func init() {
@@ -103,9 +121,26 @@ func ClearStmt() {
 	}
 }
 
+// GetTransaction get transaction
+func (adapter *Postgres) GetTransaction() (tx *sql.Tx, err error) {
+	db, err := connection.Get()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	tx, err = db.Begin()
+	return
+}
+
 // Prepare statement func
 func Prepare(db *sqlx.DB, SQL string) (stmt *sql.Stmt, err error) {
-	stmt, err = GetStmt().Prepare(db, SQL)
+	stmt, err = GetStmt().Prepare(db, nil, SQL)
+	return
+}
+
+// PrepareTx statement func
+func PrepareTx(tx *sql.Tx, SQL string) (stmt *sql.Stmt, err error) {
+	stmt, err = GetStmt().Prepare(nil, tx, SQL)
 	return
 }
 
@@ -237,6 +272,20 @@ func (adapter *Postgres) WhereByRequest(r *http.Request, initialPlaceholderID in
 	return
 }
 
+// ReturningByRequest create interface for queries + returning
+func (adapter *Postgres) ReturningByRequest(r *http.Request) (returningSyntax string, err error) {
+	queries := r.URL.Query()["_returning"]
+	if len(queries) > 0 {
+		for i, q := range queries {
+			if i > 0 && i < len(queries) {
+				returningSyntax += ", "
+			}
+			returningSyntax += q
+		}
+	}
+	return
+}
+
 // SetByRequest create a set clause for SQL
 func (adapter *Postgres) SetByRequest(r *http.Request, initialPlaceholderID int) (setSyntax string, values []interface{}, err error) {
 	body := make(map[string]interface{})
@@ -273,13 +322,81 @@ func (adapter *Postgres) SetByRequest(r *http.Request, initialPlaceholderID int)
 	return
 }
 
+func closer(body io.Closer) {
+	err := body.Close()
+	if err != nil {
+		log.Errorln(err)
+	}
+}
+
+// ParseBatchInsertRequest create insert SQL to batch request
+func (adapter *Postgres) ParseBatchInsertRequest(r *http.Request) (colsName string, placeholders string, values []interface{}, err error) {
+	recordSet := make([]map[string]interface{}, 0)
+	if err = json.NewDecoder(r.Body).Decode(&recordSet); err != nil {
+		return
+	}
+	defer closer(r.Body)
+	if len(recordSet) == 0 {
+		err = ErrBodyEmpty
+		return
+	}
+	recordKeys := adapter.tableKeys(recordSet[0])
+	colsName = strings.Join(recordKeys, ",")
+	values, placeholders, err = adapter.operationValues(recordSet, recordKeys)
+	return
+}
+
+func (adapter *Postgres) operationValues(recordSet []map[string]interface{}, recordKeys []string) (values []interface{}, placeholders string, err error) {
+	for i, record := range recordSet {
+		initPH := len(values) + 1
+		for _, key := range recordKeys {
+			key, err = strconv.Unquote(key)
+			if err != nil {
+				return
+			}
+			value := record[key]
+			switch value.(type) {
+			case []interface{}:
+				values = append(values, formatters.FormatArray(value))
+			default:
+				values = append(values, value)
+			}
+		}
+		pl := adapter.createPlaceholders(initPH, len(values))
+		placeholders = fmt.Sprintf("%s,%s", placeholders, pl)
+		if i == 0 {
+			placeholders = pl
+		}
+	}
+	return
+}
+
+func (adapter *Postgres) tableKeys(json map[string]interface{}) (keys []string) {
+	for key := range json {
+		keys = append(keys, strconv.Quote(key))
+	}
+	sort.Strings(keys)
+	return
+}
+
+func (adapter *Postgres) createPlaceholders(initial, lenValues int) (ret string) {
+	for i := initial; i <= lenValues; i++ {
+		if ret != "" {
+			ret += ","
+		}
+		ret += fmt.Sprintf("$%d", i)
+	}
+	ret = fmt.Sprintf("(%s)", ret)
+	return
+}
+
 // ParseInsertRequest create insert SQL
 func (adapter *Postgres) ParseInsertRequest(r *http.Request) (colsName string, colsValue string, values []interface{}, err error) {
 	body := make(map[string]interface{})
 	if err = json.NewDecoder(r.Body).Decode(&body); err != nil {
 		return
 	}
-	defer r.Body.Close()
+	defer closer(r.Body)
 
 	if len(body) == 0 {
 		err = ErrBodyEmpty
@@ -303,12 +420,7 @@ func (adapter *Postgres) ParseInsertRequest(r *http.Request) (colsName string, c
 	}
 
 	colsName = strings.Join(fields, ", ")
-	for i := 1; i < len(values)+1; i++ {
-		if colsValue != "" {
-			colsValue += ","
-		}
-		colsValue += fmt.Sprintf("$%d", i)
-	}
+	colsValue = adapter.createPlaceholders(1, len(values))
 	return
 }
 
@@ -365,6 +477,9 @@ func (adapter *Postgres) JoinByRequest(r *http.Request) (values []string, err er
 		return
 	}
 	errJoin := errors.New("invalid join clause")
+	if joinWith := strings.Split(joinArgs[1], "."); len(joinWith) == 2 {
+		joinArgs[1] = fmt.Sprintf(`%s"."%s`, joinWith[0], joinWith[1])
+	}
 	spl := strings.Split(joinArgs[2], ".")
 	if len(spl) != 2 {
 		err = errJoin
@@ -473,7 +588,7 @@ func (adapter *Postgres) Query(SQL string, params ...interface{}) (sc adapters.S
 		return
 	}
 	SQL = fmt.Sprintf("SELECT json_agg(s) FROM (%s) s", SQL)
-	log.Debugln(SQL, " parameters: ", params)
+	log.Debugln("generated SQL:", SQL, " parameters: ", params)
 	p, err := Prepare(db, SQL)
 	if err != nil {
 		sc = &scanner.PrestScanner{Error: err}
@@ -499,7 +614,7 @@ func (adapter *Postgres) QueryCount(SQL string, params ...interface{}) (sc adapt
 		sc = &scanner.PrestScanner{Error: err}
 		return
 	}
-	log.Debugln(SQL, " parameters: ", params)
+	log.Debugln("generated SQL:", SQL, " parameters: ", params)
 	p, err := Prepare(db, SQL)
 	if err != nil {
 		sc = &scanner.PrestScanner{Error: err}
@@ -546,6 +661,149 @@ func (adapter *Postgres) PaginateIfPossible(r *http.Request) (paginatedQuery str
 	return
 }
 
+// BatchInsertCopy execute batch insert sql into a table unsing copy
+func (adapter *Postgres) BatchInsertCopy(dbname, schema, table string, keys []string, values ...interface{}) (sc adapters.Scanner) {
+	db, err := connection.Get()
+	if err != nil {
+		log.Println(err)
+		sc = &scanner.PrestScanner{Error: err}
+		return
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		log.Println(err)
+		sc = &scanner.PrestScanner{Error: err}
+		return
+	}
+	defer func() {
+		var txerr error
+		if err != nil {
+			txerr = tx.Rollback()
+			if txerr != nil {
+				log.Errorln(txerr)
+				return
+			}
+			return
+		}
+		txerr = tx.Commit()
+		if txerr != nil {
+			log.Errorln(txerr)
+			return
+		}
+	}()
+	for i := range keys {
+		if strings.HasPrefix(keys[i], `"`) {
+			keys[i], err = strconv.Unquote(keys[i])
+			if err != nil {
+				log.Println(err)
+				sc = &scanner.PrestScanner{Error: err}
+				return
+			}
+		}
+	}
+	stmt, err := tx.Prepare(pq.CopyInSchema(schema, table, keys...))
+	if err != nil {
+		log.Println(err)
+		sc = &scanner.PrestScanner{Error: err}
+		return
+	}
+	initOffSet := 0
+	limitOffset := len(keys)
+	for limitOffset <= len(values) {
+		_, err = stmt.Exec(values[initOffSet:limitOffset]...)
+		if err != nil {
+			log.Println(err)
+			sc = &scanner.PrestScanner{Error: err}
+			return
+		}
+		initOffSet = limitOffset
+		limitOffset += len(keys)
+	}
+	_, err = stmt.Exec()
+	if err != nil {
+		log.Println(err)
+		sc = &scanner.PrestScanner{Error: err}
+		return
+	}
+	err = stmt.Close()
+	if err != nil {
+		log.Println(err)
+		sc = &scanner.PrestScanner{Error: err}
+		return
+	}
+	sc = &scanner.PrestScanner{}
+	return
+}
+
+// BatchInsertValues execute batch insert sql into a table unsing multi values
+func (adapter *Postgres) BatchInsertValues(SQL string, values ...interface{}) (sc adapters.Scanner) {
+	db, err := connection.Get()
+	if err != nil {
+		log.Println(err)
+		sc = &scanner.PrestScanner{Error: err}
+		return
+	}
+	stmt, err := adapter.fullInsert(db, nil, SQL)
+	if err != nil {
+		log.Println(err)
+		sc = &scanner.PrestScanner{Error: err}
+		return
+	}
+	jsonData := []byte("[")
+	rows, err := stmt.Query(values...)
+	if err != nil {
+		log.Println(err)
+		sc = &scanner.PrestScanner{Error: err}
+		return
+	}
+	for rows.Next() {
+		if err = rows.Err(); err != nil {
+			if err != nil {
+				log.Println(err)
+				sc = &scanner.PrestScanner{Error: err}
+				return
+			}
+		}
+		var data []byte
+		err = rows.Scan(&data)
+		if err != nil {
+			log.Println(err)
+			sc = &scanner.PrestScanner{Error: err}
+			return
+		}
+		if !bytes.Equal(jsonData, []byte("[")) {
+			obj := fmt.Sprintf("%s,%s", jsonData, data)
+			jsonData = []byte(obj)
+			continue
+		}
+		jsonData = append(jsonData, data...)
+	}
+	jsonData = append(jsonData, byte(']'))
+	sc = &scanner.PrestScanner{
+		Buff:    bytes.NewBuffer(jsonData),
+		IsQuery: true,
+	}
+	return
+}
+
+func (adapter *Postgres) fullInsert(db *sqlx.DB, tx *sql.Tx, SQL string) (stmt *sql.Stmt, err error) {
+	tableName := insertTableNameQuotesRegex.FindStringSubmatch(SQL)
+	if len(tableName) < 2 {
+		tableName = insertTableNameRegex.FindStringSubmatch(SQL)
+		if len(tableName) < 2 {
+			err = errors.New("unable to find table name")
+			return
+		}
+	}
+	SQL = fmt.Sprintf(`%s RETURNING row_to_json("%s")`, SQL, tableName[2])
+	if tx != nil {
+		stmt, err = PrepareTx(tx, SQL)
+	} else {
+		stmt, err = Prepare(db, SQL)
+	}
+	return
+}
+
 // Insert execute insert sql into a table
 func (adapter *Postgres) Insert(SQL string, params ...interface{}) (sc adapters.Scanner) {
 	db, err := connection.Get()
@@ -554,23 +812,24 @@ func (adapter *Postgres) Insert(SQL string, params ...interface{}) (sc adapters.
 		sc = &scanner.PrestScanner{Error: err}
 		return
 	}
-	tableName := insertTableNameQuotesRegex.FindStringSubmatch(SQL)
-	if len(tableName) < 2 {
-		tableName = insertTableNameRegex.FindStringSubmatch(SQL)
-		if len(tableName) < 2 {
-			err = errors.New("unable to find table name")
-			sc = &scanner.PrestScanner{Error: err}
-			return
-		}
-	}
-	log.Debugln(SQL, " parameters: ", params)
-	SQL = fmt.Sprintf(`%s RETURNING row_to_json("%s")`, SQL, tableName[2])
-	stmt, err := Prepare(db, SQL)
+	sc = adapter.insert(db, nil, SQL, params...)
+	return
+}
+
+// InsertWithTransaction execute insert sql into a table
+func (adapter *Postgres) InsertWithTransaction(tx *sql.Tx, SQL string, params ...interface{}) (sc adapters.Scanner) {
+	sc = adapter.insert(nil, tx, SQL, params...)
+	return
+}
+
+func (adapter *Postgres) insert(db *sqlx.DB, tx *sql.Tx, SQL string, params ...interface{}) (sc adapters.Scanner) {
+	stmt, err := adapter.fullInsert(db, tx, SQL)
 	if err != nil {
-		log.Printf("could not prepare sql: %s\n Error: %v\n", SQL, err)
+		log.Println(err)
 		sc = &scanner.PrestScanner{Error: err}
 		return
 	}
+	log.Debugln(SQL, " parameters: ", params)
 	var jsonData []byte
 	err = stmt.QueryRow(params...).Scan(&jsonData)
 	sc = &scanner.PrestScanner{
@@ -588,11 +847,60 @@ func (adapter *Postgres) Delete(SQL string, params ...interface{}) (sc adapters.
 		sc = &scanner.PrestScanner{Error: err}
 		return
 	}
-	log.Debugln(SQL, " parameters: ", params)
-	stmt, err := Prepare(db, SQL)
+	sc = adapter.delete(db, nil, SQL, params...)
+	return
+}
+
+// DeleteWithTransaction execute delete sql into a table
+func (adapter *Postgres) DeleteWithTransaction(tx *sql.Tx, SQL string, params ...interface{}) (sc adapters.Scanner) {
+	sc = adapter.delete(nil, tx, SQL, params...)
+	return
+}
+
+func (adapter *Postgres) delete(db *sqlx.DB, tx *sql.Tx, SQL string, params ...interface{}) (sc adapters.Scanner) {
+	log.Debugln("generated SQL:", SQL, " parameters: ", params)
+	var stmt *sql.Stmt
+	var err error
+	if tx != nil {
+		stmt, err = PrepareTx(tx, SQL)
+	} else {
+		stmt, err = Prepare(db, SQL)
+	}
 	if err != nil {
 		log.Printf("could not prepare sql: %s\n Error: %v\n", SQL, err)
 		sc = &scanner.PrestScanner{Error: err}
+		return
+	}
+	if strings.Contains(SQL, "RETURNING") {
+		rows, _ := stmt.Query(params...)
+		cols, _ := rows.Columns()
+		var data []map[string]interface{}
+		for rows.Next() {
+			columns := make([]interface{}, len(cols))
+			columnPointers := make([]interface{}, len(cols))
+			for i := range columns {
+				columnPointers[i] = &columns[i]
+			}
+			if err := rows.Scan(columnPointers...); err != nil {
+				log.Fatal(err)
+			}
+			m := make(map[string]interface{})
+			for i, colName := range cols {
+				val := columnPointers[i].(*interface{})
+				switch (*val).(type) {
+				case []uint8:
+					m[colName] = string((*val).([]byte))
+				default:
+					m[colName] = *val
+				}
+			}
+			data = append(data, m)
+		}
+		jsonData, _ := json.Marshal(data)
+		sc = &scanner.PrestScanner{
+			Error: err,
+			Buff:  bytes.NewBuffer(jsonData),
+		}
 		return
 	}
 	var result sql.Result
@@ -626,13 +934,62 @@ func (adapter *Postgres) Update(SQL string, params ...interface{}) (sc adapters.
 		sc = &scanner.PrestScanner{Error: err}
 		return
 	}
-	stmt, err := Prepare(db, SQL)
+	sc = adapter.update(db, nil, SQL, params...)
+	return
+}
+
+// UpdateWithTransaction execute update sql into a table
+func (adapter *Postgres) UpdateWithTransaction(tx *sql.Tx, SQL string, params ...interface{}) (sc adapters.Scanner) {
+	sc = adapter.update(nil, tx, SQL, params...)
+	return
+}
+
+func (adapter *Postgres) update(db *sqlx.DB, tx *sql.Tx, SQL string, params ...interface{}) (sc adapters.Scanner) {
+	var stmt *sql.Stmt
+	var err error
+	if tx != nil {
+		stmt, err = PrepareTx(tx, SQL)
+	} else {
+		stmt, err = Prepare(db, SQL)
+	}
 	if err != nil {
 		log.Printf("could not prepare sql: %s\n Error: %v\n", SQL, err)
 		sc = &scanner.PrestScanner{Error: err}
 		return
 	}
-	log.Debugln(SQL, " parameters: ", params)
+	log.Debugln("generated SQL:", SQL, " parameters: ", params)
+	if strings.Contains(SQL, "RETURNING") {
+		rows, _ := stmt.Query(params...)
+		cols, _ := rows.Columns()
+		var data []map[string]interface{}
+		for rows.Next() {
+			columns := make([]interface{}, len(cols))
+			columnPointers := make([]interface{}, len(cols))
+			for i := range columns {
+				columnPointers[i] = &columns[i]
+			}
+			if err := rows.Scan(columnPointers...); err != nil {
+				log.Fatal(err)
+			}
+			m := make(map[string]interface{})
+			for i, colName := range cols {
+				val := columnPointers[i].(*interface{})
+				switch (*val).(type) {
+				case []uint8:
+					m[colName] = string((*val).([]byte))
+				default:
+					m[colName] = *val
+				}
+			}
+			data = append(data, m)
+		}
+		jsonData, _ := json.Marshal(data)
+		sc = &scanner.PrestScanner{
+			Error: err,
+			Buff:  bytes.NewBuffer(jsonData),
+		}
+		return
+	}
 	var result sql.Result
 	var rowsAffected int64
 	result, err = stmt.Exec(params...)
@@ -698,6 +1055,8 @@ func GetQueryOperator(op string) (string, error) {
 		return "IS NOT FALSE", nil
 	case "like":
 		return "LIKE", nil
+	case "ilike":
+		return "ILIKE", nil
 	}
 
 	err := errors.New("Invalid operator")
@@ -725,40 +1084,72 @@ func (adapter *Postgres) TablePermissions(table string, op string) bool {
 	return false
 }
 
-// FieldsPermissions get fields permissions based in prest configuration
-func (adapter *Postgres) FieldsPermissions(r *http.Request, table string, op string) (fields []string, err error) {
-	restrict := config.PrestConf.AccessConf.Restrict
-	cols := columnsByRequest(r)
-	queries := r.URL.Query()
-	if queries.Get("_groupby") != "" {
-		cols, err = normalizeAll(cols)
-		if err != nil {
-			return
-		}
-	}
-	if !restrict {
-		fields = cols
-		return
-	}
-
+func fieldsByPermission(table, op string) (fields []string) {
 	tables := config.PrestConf.AccessConf.Tables
 	for _, t := range tables {
 		if t.Name == table {
-			for _, col := range cols {
-				// return all permitted fields if have "*" in SELECT
-				if op == "read" && col == "*" {
+			for _, perm := range t.Permissions {
+				if perm == op {
 					fields = t.Fields
-					return
-				}
-				pField := checkField(col, t.Fields)
-				if pField != "" {
-					fields = append(fields, pField)
 				}
 			}
-			return
 		}
 	}
-	return nil, errors.New("0 tables configured")
+	return
+}
+
+func containsAsterisk(arr []string) bool {
+	for _, e := range arr {
+		if e == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+func intersection(set, other []string) (intersection []string) {
+	for _, field := range set {
+		pField := checkField(field, other)
+		if pField != "" {
+			intersection = append(intersection, pField)
+		}
+	}
+	return
+}
+
+// FieldsPermissions get fields permissions based in prest configuration
+func (adapter *Postgres) FieldsPermissions(r *http.Request, table string, op string) (fields []string, err error) {
+	cols, err := columnsByRequest(r)
+	if err != nil {
+		err = fmt.Errorf("error on parse columns from request: %s", err)
+		return
+	}
+	restrict := config.PrestConf.AccessConf.Restrict
+	if !restrict || op == "delete" {
+		if len(cols) > 0 {
+			fields = cols
+			return
+		}
+		fields = []string{"*"}
+		return
+	}
+	allowedFields := fieldsByPermission(table, op)
+	if len(allowedFields) == 0 {
+		err = errors.New("there's no configured field for this table")
+		return
+	}
+	if containsAsterisk(allowedFields) {
+		fields = []string{"*"}
+		if len(cols) > 0 {
+			fields = cols
+		}
+		return
+	}
+	fields = intersection(cols, allowedFields)
+	if len(cols) == 0 {
+		fields = allowedFields
+	}
+	return
 }
 
 func checkField(col string, fields []string) (p string) {
@@ -799,23 +1190,22 @@ func normalizeColumn(col string) (gf string, err error) {
 }
 
 // columnsByRequest extract columns and return as array of strings
-func columnsByRequest(r *http.Request) []string {
-	u, _ := r.URL.Parse(r.URL.String())
-	columnsArr := u.Query()["_select"]
-	var columns []string
-
+func columnsByRequest(r *http.Request) (columns []string, err error) {
+	queries := r.URL.Query()
+	columnsArr := queries["_select"]
 	for _, j := range columnsArr {
 		cArgs := strings.Split(j, ",")
 		for _, columnName := range cArgs {
-			if len(columnName) > 0 {
-				columns = append(columns, columnName)
-			}
+			columns = append(columns, columnName)
 		}
 	}
-	if len(columns) == 0 {
-		return []string{"*"}
+	if queries.Get("_groupby") != "" {
+		columns, err = normalizeAll(columns)
+		if err != nil {
+			return
+		}
 	}
-	return columns
+	return
 }
 
 // DistinctClause get params in request to add distinct clause
@@ -901,4 +1291,103 @@ func NormalizeGroupFunction(paramValue string) (groupFuncSQL string, err error) 
 // SetDatabase set the current database name in use
 func (adapter *Postgres) SetDatabase(name string) {
 	connection.SetDatabase(name)
+}
+
+// SelectSQL generate select sql
+func (adapter *Postgres) SelectSQL(selectStr string, database string, schema string, table string) string {
+	return fmt.Sprintf(`%s "%s"."%s"."%s"`, selectStr, database, schema, table)
+}
+
+// InsertSQL generate insert sql
+func (adapter *Postgres) InsertSQL(database string, schema string, table string, names string, placeholders string) string {
+	return fmt.Sprintf(statements.InsertQuery, database, schema, table, names, placeholders)
+}
+
+// DeleteSQL generate delete sql
+func (adapter *Postgres) DeleteSQL(database string, schema string, table string) string {
+	return fmt.Sprintf(statements.DeleteQuery, database, schema, table)
+}
+
+// UpdateSQL generate update sql
+func (adapter *Postgres) UpdateSQL(database string, schema string, table string, setSyntax string) string {
+	return fmt.Sprintf(statements.UpdateQuery, database, schema, table, setSyntax)
+}
+
+// DatabaseWhere generate database where syntax
+func (adapter *Postgres) DatabaseWhere(requestWhere string) (whereSyntax string) {
+	whereSyntax = statements.DatabasesWhere
+	if requestWhere != "" {
+		whereSyntax = fmt.Sprint(whereSyntax, " AND ", requestWhere)
+	}
+	return
+}
+
+// DatabaseOrderBy generate database order by
+func (adapter *Postgres) DatabaseOrderBy(order string, hasCount bool) (orderBy string) {
+	if order != "" {
+		orderBy = order
+	} else if !hasCount {
+		orderBy = fmt.Sprintf(statements.DatabasesOrderBy, statements.FieldDatabaseName)
+	}
+	return
+}
+
+// SchemaOrderBy generate schema order by
+func (adapter *Postgres) SchemaOrderBy(order string, hasCount bool) (orderBy string) {
+	if order != "" {
+		orderBy = order
+	} else if !hasCount {
+		orderBy = fmt.Sprintf(statements.SchemasOrderBy, statements.FieldSchemaName)
+	}
+	return
+}
+
+// TableClause generate table clause
+func (adapter *Postgres) TableClause() (query string) {
+	query = statements.TablesSelect
+	return
+}
+
+// TableWhere generate table where syntax
+func (adapter *Postgres) TableWhere(requestWhere string) (whereSyntax string) {
+	whereSyntax = statements.TablesWhere
+	if requestWhere != "" {
+		whereSyntax = fmt.Sprint(whereSyntax, " AND ", requestWhere)
+	}
+	return
+}
+
+// TableOrderBy generate table order by
+func (adapter *Postgres) TableOrderBy(order string) (orderBy string) {
+	if order != "" {
+		orderBy = order
+	} else {
+		orderBy = statements.TablesOrderBy
+	}
+	return
+}
+
+// SchemaTablesClause generate schema tables clause
+func (adapter *Postgres) SchemaTablesClause() (query string) {
+	query = statements.SchemaTablesSelect
+	return
+}
+
+// SchemaTablesWhere generate schema tables where syntax
+func (adapter *Postgres) SchemaTablesWhere(requestWhere string) (whereSyntax string) {
+	whereSyntax = statements.SchemaTablesWhere
+	if requestWhere != "" {
+		whereSyntax = fmt.Sprint(whereSyntax, " AND ", requestWhere)
+	}
+	return
+}
+
+// SchemaTablesOrderBy generate schema tables order by
+func (adapter *Postgres) SchemaTablesOrderBy(order string) (orderBy string) {
+	if order != "" {
+		orderBy = order
+	} else {
+		orderBy = statements.SchemaTablesOrderBy
+	}
+	return
 }
