@@ -1,0 +1,12 @@
+migrations = "./migrations"
+
+[jwt]
+default = false
+
+[access]
+restrict = true  # can access only the tables listed below
+
+    [[access.tables]]
+    name = "objects"
+    permissions = ["read", "write"]
+    fields = ["uuid", "key", "node", "object", "created_at", "last_update"]
