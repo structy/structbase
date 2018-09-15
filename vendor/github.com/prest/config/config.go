@@ -82,7 +82,7 @@ func viperCfg() {
 	viper.AddConfigPath(dir)
 	viper.SetConfigName(file)
 	viper.SetConfigType("toml")
-	viper.SetDefault("http.host", "")
+	viper.SetDefault("http.host", "0.0.0.0")
 	viper.SetDefault("http.port", 3000)
 	viper.SetDefault("pg.host", "127.0.0.1")
 	viper.SetDefault("pg.port", 5432)
