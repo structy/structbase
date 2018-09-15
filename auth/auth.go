@@ -29,7 +29,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	tokens := []keySecret{}
 	query := "SELECT key, secret FROM tokens WHERE key=$1 and secret=$2 LIMIT 1"
+	fmt.Println("here 1")
 	cq := config.PrestConf.Adapter.Query(query, handlerKeySecret.Key, handlerKeySecret.Secret)
+	fmt.Println("here 2")
 	err := json.Unmarshal(cq.Bytes(), &tokens)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
