@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
+	"github.com/prest/adapters"
 	"github.com/prest/config"
-	"github.com/prest/statements"
 )
 
 // GetTables list all (or filter) tables
@@ -18,6 +18,7 @@ func GetTables(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	requestWhere = config.PrestConf.Adapter.TableWhere(requestWhere)
 
 	order, err := config.PrestConf.Adapter.OrderByRequest(r)
 	if err != nil {
@@ -25,14 +26,9 @@ func GetTables(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	order = config.PrestConf.Adapter.TableOrderBy(order)
 
-	if order == "" {
-		order = statements.TablesOrderBy
-	}
-
-	sqlTables := fmt.Sprint(
-		statements.TablesSelect,
-		statements.TablesWhere)
+	sqlTables := config.PrestConf.Adapter.TableClause()
 
 	distinct, err := config.PrestConf.Adapter.DistinctClause(r)
 	if err != nil {
@@ -43,11 +39,8 @@ func GetTables(w http.ResponseWriter, r *http.Request) {
 		sqlTables = strings.Replace(sqlTables, "SELECT", distinct, 1)
 	}
 
-	if requestWhere != "" {
-		sqlTables = fmt.Sprintf("%s AND %s", sqlTables, requestWhere)
-	}
+	sqlTables = fmt.Sprint(sqlTables, requestWhere, order)
 
-	sqlTables = fmt.Sprint(sqlTables, order)
 	sc := config.PrestConf.Adapter.Query(sqlTables, values...)
 	if sc.Err() != nil {
 		http.Error(w, sc.Err().Error(), http.StatusBadRequest)
@@ -70,14 +63,9 @@ func GetTablesByDatabaseAndSchema(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	requestWhere = config.PrestConf.Adapter.SchemaTablesWhere(requestWhere)
 
-	sqlSchemaTables := fmt.Sprint(
-		statements.SchemaTablesSelect,
-		statements.SchemaTablesWhere)
-
-	if requestWhere != "" {
-		sqlSchemaTables = fmt.Sprint(sqlSchemaTables, " AND ", requestWhere)
-	}
+	sqlSchemaTables := config.PrestConf.Adapter.SchemaTablesClause()
 
 	order, err := config.PrestConf.Adapter.OrderByRequest(r)
 	if err != nil {
@@ -85,11 +73,7 @@ func GetTablesByDatabaseAndSchema(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if order != "" {
-		sqlSchemaTables = fmt.Sprint(sqlSchemaTables, order)
-	} else {
-		sqlSchemaTables = fmt.Sprint(sqlSchemaTables, statements.SchemaTablesOrderBy)
-	}
+	order = config.PrestConf.Adapter.SchemaTablesOrderBy(order)
 
 	page, err := config.PrestConf.Adapter.PaginateIfPossible(r)
 	if err != nil {
@@ -98,7 +82,7 @@ func GetTablesByDatabaseAndSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sqlSchemaTables = fmt.Sprint(sqlSchemaTables, " ", page)
+	sqlSchemaTables = fmt.Sprint(sqlSchemaTables, requestWhere, order, " ", page)
 
 	valuesAux := make([]interface{}, 0)
 	valuesAux = append(valuesAux, database)
@@ -139,7 +123,7 @@ func SelectFromTables(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	query := fmt.Sprintf(`%s "%s"."%s"."%s"`, selectStr, database, schema, table)
+	query := config.PrestConf.Adapter.SelectSQL(selectStr, database, schema, table)
 
 	countQuery, err := config.PrestConf.Adapter.CountByRequest(r)
 	if err != nil {
@@ -148,7 +132,7 @@ func SelectFromTables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if countQuery != "" {
-		query = fmt.Sprintf(`%s "%s"."%s"."%s"`, countQuery, database, schema, table)
+		query = config.PrestConf.Adapter.SelectSQL(countQuery, database, schema, table)
 	}
 
 	joinValues, err := config.PrestConf.Adapter.JoinByRequest(r)
@@ -230,13 +214,45 @@ func InsertInTables(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sql := fmt.Sprintf(statements.InsertQuery, database, schema, table, names, placeholders)
+	sql := config.PrestConf.Adapter.InsertSQL(database, schema, table, names, placeholders)
 
 	sc := config.PrestConf.Adapter.Insert(sql, values...)
 	if sc.Err() != nil {
 		http.Error(w, sc.Err().Error(), http.StatusBadRequest)
 		return
 	}
+	w.WriteHeader(http.StatusCreated)
+	w.Write(sc.Bytes())
+}
+
+// BatchInsertInTables perform insert in specific table from a batch request
+func BatchInsertInTables(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	database := vars["database"]
+	schema := vars["schema"]
+	table := vars["table"]
+
+	config.PrestConf.Adapter.SetDatabase(database)
+
+	names, placeholders, values, err := config.PrestConf.Adapter.ParseBatchInsertRequest(r)
+	if err != nil {
+		err = fmt.Errorf("could not perform BatchInsertInTables: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var sc adapters.Scanner
+	method := r.Header.Get("Prest-Batch-Method")
+	if strings.ToLower(method) != "copy" {
+		sql := config.PrestConf.Adapter.InsertSQL(database, schema, table, names, placeholders)
+		sc = config.PrestConf.Adapter.BatchInsertValues(sql, values...)
+	} else {
+		sc = config.PrestConf.Adapter.BatchInsertCopy(database, schema, table, strings.Split(names, ","), values...)
+	}
+	if err = sc.Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
 	w.Write(sc.Bytes())
 }
 
@@ -256,9 +272,23 @@ func DeleteFromTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sql := fmt.Sprintf(statements.DeleteQuery, database, schema, table)
+	sql := config.PrestConf.Adapter.DeleteSQL(database, schema, table)
 	if where != "" {
 		sql = fmt.Sprint(sql, " WHERE ", where)
+	}
+
+	returningSyntax, err := config.PrestConf.Adapter.ReturningByRequest(r)
+	if err != nil {
+		err = fmt.Errorf("could not perform ReturningByRequest: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if returningSyntax != "" {
+		sql = fmt.Sprint(
+			sql,
+			" RETURNING ",
+			returningSyntax)
 	}
 
 	sc := config.PrestConf.Adapter.Delete(sql, values...)
@@ -278,29 +308,43 @@ func UpdateTable(w http.ResponseWriter, r *http.Request) {
 
 	config.PrestConf.Adapter.SetDatabase(database)
 
-	where, whereValues, err := config.PrestConf.Adapter.WhereByRequest(r, 1)
+	setSyntax, values, err := config.PrestConf.Adapter.SetByRequest(r, 1)
+	if err != nil {
+		err = fmt.Errorf("could not perform UPDATE: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	sql := config.PrestConf.Adapter.UpdateSQL(database, schema, table, setSyntax)
+
+	pid := len(values) + 1 // placeholder id
+
+	where, whereValues, err := config.PrestConf.Adapter.WhereByRequest(r, pid)
 	if err != nil {
 		err = fmt.Errorf("could not perform WhereByRequest: %v", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	pid := len(whereValues) + 1 // placeholder id
-
-	setSyntax, values, err := config.PrestConf.Adapter.SetByRequest(r, pid)
-	if err != nil {
-		err = fmt.Errorf("could not perform UPDATE: %v", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	sql := fmt.Sprintf(statements.UpdateQuery, database, schema, table, setSyntax)
-
 	if where != "" {
 		sql = fmt.Sprint(
 			sql,
 			" WHERE ",
 			where)
-		values = append(whereValues, values...)
+		values = append(values, whereValues...)
+	}
+
+	returningSyntax, err := config.PrestConf.Adapter.ReturningByRequest(r)
+	if err != nil {
+		err = fmt.Errorf("could not perform ReturningByRequest: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if returningSyntax != "" {
+		sql = fmt.Sprint(
+			sql,
+			" RETURNING ",
+			returningSyntax)
 	}
 
 	sc := config.PrestConf.Adapter.Update(sql, values...)
