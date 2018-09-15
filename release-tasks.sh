@@ -1,1 +1,2 @@
-./mds migrate up
+go build && \
+    ./mds migrate up
