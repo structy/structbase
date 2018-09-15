@@ -1,2 +1,2 @@
 release: ./release-tasks.sh
-web: ./mds
+web: ./bin/mds

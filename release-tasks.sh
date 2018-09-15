@@ -1,2 +1,1 @@
-go build && \
-    ./mds migrate up
+./bin/mds migrate up
