@@ -55,7 +55,7 @@ github.com/prest/adapters/postgres/statements
 github.com/prest/adapters/scanner
 # github.com/prest/cmd v0.0.0-20180710121315-d1de3d3fa1da
 github.com/prest/cmd
-# github.com/prest/config v0.0.0-20180822131905-619b86188d0a
+# github.com/prest/config v0.0.0-20180915211836-080ab42e282b
 github.com/prest/config
 github.com/prest/config/router
 # github.com/prest/controllers v0.0.0-20180904124317-b69fb390b8f4
@@ -83,7 +83,7 @@ github.com/spf13/pflag
 github.com/spf13/viper
 # github.com/urfave/negroni v1.0.0
 github.com/urfave/negroni
-# golang.org/x/sys v0.0.0-20180906133057-8cf3aee42992
+# golang.org/x/sys v0.0.0-20180909124046-d0be0721c37e
 golang.org/x/sys/unix
 # golang.org/x/text v0.3.0
 golang.org/x/text/transform

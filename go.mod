@@ -16,7 +16,7 @@ require (
 	github.com/nuveo/log v0.0.0-20180612162145-f88607104ac8 // indirect
 	github.com/prest/adapters v0.0.0-20180914130618-b7f47ebda8ef
 	github.com/prest/cmd v0.0.0-20180710121315-d1de3d3fa1da
-	github.com/prest/config v0.0.0-20180822131905-619b86188d0a
+	github.com/prest/config v0.0.0-20180915211836-080ab42e282b
 	github.com/prest/controllers v0.0.0-20180904124317-b69fb390b8f4 // indirect
 	github.com/prest/helpers v0.0.0-20180627002842-07dcf603c9a1 // indirect
 	github.com/prest/middlewares v0.0.0-20180320134728-7080d6f0e4de
@@ -25,5 +25,7 @@ require (
 	github.com/spf13/cobra v0.0.3 // indirect
 	github.com/spf13/viper v1.2.0 // indirect
 	github.com/urfave/negroni v1.0.0
+	golang.org/x/sys v0.0.0-20180909124046-d0be0721c37e // indirect
+	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
 	gopkg.in/mattes/migrate.v1 v1.3.2 // indirect
 )
