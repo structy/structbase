@@ -1,9 +1,9 @@
 # mds
 Mining Data Storage
 
-**Free REST API Data Storage** with audit logging, all updated *key/node* is generated historical in **Audit Table** (automatically)
+**Free REST API Data Storage** with audit logging, all updated *key/node* is generated historical in **Audit Table** (automatically).
 
-Proposal to be **firebase** Open Source
+Proposal to be **firebase** Open Source, using **Postgres** as data structure.
 
 ## Data architecture
 
