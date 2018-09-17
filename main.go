@@ -23,6 +23,7 @@ func main() {
 		negroni.Handler(negroni.NewLogger()),
 		negroni.Handler(middlewares.HandlerSet()),
 		negroni.Handler(negroni.HandlerFunc(middleware.WhiteMiddleware)),
+		negroni.Handler(negroni.HandlerFunc(middleware.RuleMiddleware)),
 	}
 
 	// pREST routes

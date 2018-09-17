@@ -1,19 +1,22 @@
 package middleware
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
 
 	jwtmiddleware "github.com/auth0/go-jwt-middleware"
 	jwt "github.com/dgrijalva/jwt-go"
+	"github.com/mining/mds/auth"
 	"github.com/prest/config"
 )
 
+var URIWhiteList = []string{"/auth", "/token"}
+
 // WhiteMiddleware open endpoints
 func WhiteMiddleware(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-	match := []string{"/auth", "/token"}
-	for _, m := range match {
+	for _, m := range URIWhiteList {
 		if strings.Contains(r.URL.String(), m) {
 			next(w, r)
 			return
@@ -31,4 +34,30 @@ func WhiteMiddleware(w http.ResponseWriter, r *http.Request, next http.HandlerFu
 		return
 	}
 	next(w, r)
+}
+
+// RuleMiddleware validate access
+func RuleMiddleware(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+	for _, m := range URIWhiteList {
+		if strings.Contains(r.URL.String(), m) {
+			next(w, r)
+			return
+		}
+	}
+	u := r.Context().Value("user")
+	user := u.(*jwt.Token)
+	iss := user.Claims.(jwt.MapClaims)["iss"].(string)
+	keySecret := auth.KeySecret{}
+	if err := json.Unmarshal([]byte(iss), &keySecret); err != nil {
+		log.Println("check jwt error", err.Error())
+		return
+	}
+	for _, method := range keySecret.Rules {
+		if strings.ToUpper(method) == r.Method {
+			next(w, r)
+			return
+		}
+	}
+	log.Println(user, "Access Denied!")
+	return
 }

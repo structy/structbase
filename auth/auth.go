@@ -9,26 +9,27 @@ import (
 	"github.com/prest/config"
 )
 
-type keySecret struct {
+type KeySecret struct {
 	Key    string
 	Secret string
+	Rules  []string
 }
 
 type Auth struct {
-	Data  keySecret
+	Data  KeySecret
 	Token string
 }
 
 // Post to generate token
 func Handler(w http.ResponseWriter, r *http.Request) {
-	handlerKeySecret := keySecret{}
+	handlerKeySecret := KeySecret{}
 	defer r.Body.Close()
 	if err := json.NewDecoder(r.Body).Decode(&handlerKeySecret); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	tokens := []keySecret{}
-	query := "SELECT key, secret FROM tokens WHERE key=$1 and secret=$2 LIMIT 1"
+	tokens := []KeySecret{}
+	query := "SELECT key, secret, rules FROM tokens WHERE key=$1 and secret=$2 LIMIT 1"
 	cq := config.PrestConf.Adapter.Query(query, handlerKeySecret.Key, handlerKeySecret.Secret)
 	err := json.Unmarshal(cq.Bytes(), &tokens)
 	if err != nil {
@@ -39,7 +40,11 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Key/Secret not found", http.StatusBadRequest)
 		return
 	}
-	tokenString, err := token.Generate(fmt.Sprintf("%s-%s", tokens[0].Key, tokens[0].Secret))
+	tokenJson, err := json.Marshal(tokens[0])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	}
+	tokenString, err := token.Generate(fmt.Sprintf(string(tokenJson)))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
