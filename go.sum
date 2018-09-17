@@ -35,12 +35,10 @@ github.com/nuveo/log v0.0.0-20180612162145-f88607104ac8 h1:fQ/TJHHZVFrQr/HKf5Oa9
 github.com/nuveo/log v0.0.0-20180612162145-f88607104ac8/go.mod h1:3hnKPKp4eM6b2+y19LM7XRFDT5hN1gV7LwijyQqqeNc=
 github.com/pelletier/go-toml v1.2.0 h1:T5zMGML61Wp+FlcbWjRDT7yAxhJNAiPPLOFECq181zc=
 github.com/pelletier/go-toml v1.2.0/go.mod h1:5z9KED0ma1S8pY6P1sdut58dfprrGBbd/94hg7ilaic=
-github.com/prest/adapters v0.0.0-20180914130618-b7f47ebda8ef h1:6ssMT8nMhWb5Fjaeg67T+j/QcyJGCnRcFBfO4s3KD9k=
-github.com/prest/adapters v0.0.0-20180914130618-b7f47ebda8ef/go.mod h1:B2xGfU92dj+gznSb/wwbnsc3jojUSTxyxswNEbZWXcY=
+github.com/prest/adapters v0.0.0-20180917165123-f657f414e582 h1:MPNI1MHxdZ90HT5Za+WNte6jGW6vLsNiB6+nemNwX50=
+github.com/prest/adapters v0.0.0-20180917165123-f657f414e582/go.mod h1:B2xGfU92dj+gznSb/wwbnsc3jojUSTxyxswNEbZWXcY=
 github.com/prest/cmd v0.0.0-20180710121315-d1de3d3fa1da h1:NAos/Z5pH8GwLpZtSu7Y6K0qUxebdzpvKzPUehBNs+c=
 github.com/prest/cmd v0.0.0-20180710121315-d1de3d3fa1da/go.mod h1:yFyHF23c2myK7fTWZERgdwwIxWiOp3DDsibhktuXUDo=
-github.com/prest/config v0.0.0-20180822131905-619b86188d0a h1:cDK4J5t9ycWFLSfkYBCZ1jT2CIPQWQ6c/l2s6jyZBWk=
-github.com/prest/config v0.0.0-20180822131905-619b86188d0a/go.mod h1:Kix9Ha+37NErVnL8haHu2NGMzw59VgWjeC+b4OWLyJ8=
 github.com/prest/config v0.0.0-20180915211836-080ab42e282b h1:VsOHy/d0hNeCSZ20oMzTDeSBARd0mO4pXA6HEUyTaNo=
 github.com/prest/config v0.0.0-20180915211836-080ab42e282b/go.mod h1:Kix9Ha+37NErVnL8haHu2NGMzw59VgWjeC+b4OWLyJ8=
 github.com/prest/controllers v0.0.0-20180904124317-b69fb390b8f4 h1:0NOvbvyatByoE2OLsP03pOye1zHQJ5yJtGZ+/TMgIM4=

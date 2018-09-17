@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/mining/mds/token"
 	"github.com/prest/config"
+	"github.com/structy/structbase/token"
 )
 
 type KeySecret struct {

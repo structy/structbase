@@ -1,13 +1,13 @@
 package main
 
 import (
-	"github.com/mining/mds/auth"
-	"github.com/mining/mds/middleware"
 	"github.com/prest/adapters/postgres"
 	"github.com/prest/cmd"
 	"github.com/prest/config"
 	"github.com/prest/config/router"
 	"github.com/prest/middlewares"
+	"github.com/structy/structbase/auth"
+	"github.com/structy/structbase/middleware"
 	"github.com/urfave/negroni"
 )
 

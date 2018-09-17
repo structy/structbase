@@ -5,7 +5,7 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_DB=mds
+      - POSTGRES_DB=structbase
       - POSTGRES_USER=postgres
       - TZ=GMT
     volumes:
@@ -19,6 +19,6 @@ services:
     environment:
       - PREST_PG_USER=postgres
       - PREST_PG_HOST=postgres
-      - PREST_PG_DATABASE=mds
+      - PREST_PG_DATABASE=structbase
       - PREST_MIGRATIONS=./migrations
       - PREST_DEBUG=true

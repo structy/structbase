@@ -1,1 +1,1 @@
-./bin/mds migrate up
+./bin/structbase migrate up

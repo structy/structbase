@@ -1,4 +1,4 @@
-module github.com/mining/mds
+module github.com/structy/structbase
 
 require (
 	github.com/auth0/go-jwt-middleware v0.0.0-20170425171159-5493cabe49f7
@@ -14,7 +14,7 @@ require (
 	github.com/mattn/go-isatty v0.0.4 // indirect
 	github.com/mitchellh/go-homedir v1.0.0 // indirect
 	github.com/nuveo/log v0.0.0-20180612162145-f88607104ac8 // indirect
-	github.com/prest/adapters v0.0.0-20180914130618-b7f47ebda8ef
+	github.com/prest/adapters v0.0.0-20180917165123-f657f414e582
 	github.com/prest/cmd v0.0.0-20180710121315-d1de3d3fa1da
 	github.com/prest/config v0.0.0-20180915211836-080ab42e282b
 	github.com/prest/controllers v0.0.0-20180904124317-b69fb390b8f4 // indirect

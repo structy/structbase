@@ -46,7 +46,7 @@ github.com/mitchellh/mapstructure
 github.com/nuveo/log
 # github.com/pelletier/go-toml v1.2.0
 github.com/pelletier/go-toml
-# github.com/prest/adapters v0.0.0-20180914130618-b7f47ebda8ef
+# github.com/prest/adapters v0.0.0-20180917165123-f657f414e582
 github.com/prest/adapters/postgres
 github.com/prest/adapters
 github.com/prest/adapters/postgres/formatters

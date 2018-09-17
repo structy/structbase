@@ -1,2 +1,2 @@
 release: ./release-tasks.sh
-web: ./bin/mds
+web: ./bin/structbase

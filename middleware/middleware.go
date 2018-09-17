@@ -8,8 +8,8 @@ import (
 
 	jwtmiddleware "github.com/auth0/go-jwt-middleware"
 	jwt "github.com/dgrijalva/jwt-go"
-	"github.com/mining/mds/auth"
 	"github.com/prest/config"
+	"github.com/structy/structbase/auth"
 )
 
 var URIWhiteList = []string{"/auth", "/token"}
